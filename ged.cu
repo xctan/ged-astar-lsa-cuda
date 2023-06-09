@@ -45,6 +45,40 @@ __device__ int *mapping_order;
 __device__ sibling *sibling_pool;
 __device__ int used_siblings = 0;
 
+struct pair { double weight; int index; };
+
+void heap_top_down(int idx, int heap_n, std::vector<pair> &heap, int *pos) {
+    pair tmp = heap[idx];
+    while (2 * idx + 1 < heap_n) {
+        int i = 2 * idx +1 ;
+        if (i + 1 < heap_n && heap[i + 1].weight > heap[i].weight) ++i;
+        if (heap[i].weight > tmp.weight) {
+            heap[idx] = heap[i];
+            pos[heap[idx].index] = idx;
+            idx = i;
+        }
+        else break;
+    }
+    heap[idx] = tmp;
+    pos[tmp.index] = idx;
+}
+
+void heap_bottom_up(int idx, std::vector<pair> &heap, int *pos) {
+    pair tmp = heap[idx];
+    while (idx > 0) {
+        int i = (idx - 1) / 2;
+        if (heap[i].weight < tmp.weight) {
+            heap[idx] = heap[i];
+            pos[heap[idx].index] = idx;
+            idx = i;
+        }
+        else break;
+    }
+    heap[idx] = tmp;
+    pos[tmp.index] = idx;
+}
+
+
 int ged_astar_gpu(const Graph &q, const Graph &g) {
     int k = THREADS_PER_BLOCK * BLOCKS;
 
@@ -201,7 +235,7 @@ int ged_astar_gpu(const Graph &q, const Graph &g) {
                 root_weight = weight;
             }
         }
-        struct pair { double weight; int index; };
+        
         std::vector<pair> heap(q.num_vertices);
         for (int i = 0; i < q.num_vertices; i++) {
             if (i == root) heap[i].weight = root_weight;
@@ -220,17 +254,19 @@ int ged_astar_gpu(const Graph &q, const Graph &g) {
             pos[u] = heap_n - 1;
             heap[0] = heap[--heap_n];
             pos[heap[0].index] = 0;
-            std::make_heap(heap.begin(), heap.begin() + heap_n, [](pair a, pair b) { return a.weight < b.weight; });
+            //std::make_heap(heap.begin(), heap.begin() + heap_n, [](pair a, pair b) { return a.weight < b.weight; });
+            heap_top_down(0, heap_n, heap, pos);
             for (int j = q.edge_from_sep[u]; j < q.edge_from_sep[u + 1]; j++) {
                 if (pos[q.edge_to[j]] < heap_n) {
                     int idx = pos[q.edge_to[j]];
-                    if (heap[idx].weight < 1e-4) {
+                    if (heap[idx].weight < 1e-5) {
                         heap[idx].weight += 1 - vlabels_cnt[q_vlabels_cpu[q.edge_to[j]]] / (double)g.num_vertices;
                     }
                     heap[idx].weight += 1 - elabels_cnt[q_elabels_cpu[j]] / (double)g.num_edges;
+                    heap_bottom_up(idx, heap, pos);
                 }
             }
-            std::make_heap(heap.begin(), heap.begin() + heap_n, [](pair a, pair b) { return a.weight < b.weight; });
+            //std::make_heap(heap.begin(), heap.begin() + heap_n, [](pair a, pair b) { return a.weight < b.weight; });
         }
         printf("mapping order: ");
         for (int i = 0; i < q.num_vertices; i++) {
