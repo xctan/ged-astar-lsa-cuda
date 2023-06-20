@@ -721,14 +721,12 @@ __global__ void fill_list(int k, heap **Q, list *S, state *states_pool) {
                 inner_ged = u_inner_cnt;
             }
             inner_ged -= el_common;
-            // TODO: 不一致: children[i-pre_siblings].first = - mapped_cost - cross_ged - inner_ged - lb;
             children[i].weight = mapped_cost + cross_ged + inner_ged + lb;
             assert(mapped_cost >= 0);
             assert(cross_ged >= 0);
             assert(inner_ged >= 0);
             assert(lb >= 0);
             assert(children[i].weight >= 0);
-            // TODO: 不一致: children[i-pre_siblings].second = v;
             children[i].image = v;
 
             for (int j = g_starts[v]; j < g_starts[v + 1]; j++) {
@@ -862,10 +860,16 @@ __device__ void sort_siblings(sibling *begin, sibling *end) {
 }
 
 __device__ sibling *alloc_siblings(int n) {
-    int end = atomicAdd(&used_siblings, n);
+    atomicAdd(&used_siblings, n);
+    int end = used_siblings;
+
+    // TODO: 修正
+    /*
     if (end >= MAX_N) {
         out_of_memory = 1;
         return NULL;
     }
+    */
+
     return &(sibling_pool[end - n]);
 }
