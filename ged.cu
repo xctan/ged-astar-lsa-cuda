@@ -29,7 +29,7 @@ __device__ sibling *alloc_siblings(int n);
 void states_pool_create(state **states);
 void states_pool_destroy(state *states_pool);
 
-#define THREADS_PER_BLOCK  128
+#define THREADS_PER_BLOCK 128
 #define BLOCKS 16
 
 __device__ int total_Q_size = 0;
@@ -44,6 +44,9 @@ __device__ u8 *q_matrix;
 __device__ int *mapping_order;
 __device__ sibling *sibling_pool;
 __device__ int used_siblings = 0;
+__device__ int used_states = 0;
+
+__device__ int max_level = 0;
 
 struct pair { double weight; int index; };
 
@@ -79,14 +82,25 @@ void heap_bottom_up(int idx, std::vector<pair> &heap, int *pos) {
 }
 
 
-int ged_astar_gpu(const Graph &q, const Graph &g) {
+int ged_astar_gpu(const Graph &q_, const Graph &g_) {
     int k = THREADS_PER_BLOCK * BLOCKS;
 
     auto start = std::chrono::high_resolution_clock::now();
 
     // preprocessing
     {
-        // TODO: swap q and g if q.num_vertices > g.num_vertices
+        // swap q and g if q.num_vertices > g.num_vertices
+        const Graph *pq, *pg;
+        if (q_.num_vertices > g_.num_vertices) {
+            pq = &g_;
+            pg = &q_;
+        }
+        else {
+            pq = &q_;
+            pg = &g_;
+        }
+        const Graph &q = *pq;
+        const Graph &g = *pg;
 
         std::map<int, int> vlabel_map, elabel_map;
         for (int i = 0; i < q.num_vertices; i++) {
@@ -297,6 +311,8 @@ int ged_astar_gpu(const Graph &q, const Graph &g) {
     int total_Q_size_cpu;
     int out_of_memory_cpu;
 
+    auto search_start = std::chrono::high_resolution_clock::now();
+
     init_heap<<<1, 1>>>(Q, states_pool);
     int step = 0;
     do {
@@ -304,7 +320,6 @@ int ged_astar_gpu(const Graph &q, const Graph &g) {
         HANDLE_RESULT(cudaDeviceSynchronize());
 
         HANDLE_RESULT(cudaMemcpyFromSymbol(&total_Q_size_cpu, total_Q_size, sizeof(int)));
-        printf("step %d, total_Q_size %d\n", step, total_Q_size_cpu);
 
         fill_list<<<BLOCKS, THREADS_PER_BLOCK>>>(k, Q, S, states_pool);
         HANDLE_RESULT(cudaMemcpyFromSymbol(&out_of_memory_cpu, out_of_memory, sizeof(int)));
@@ -314,7 +329,18 @@ int ged_astar_gpu(const Graph &q, const Graph &g) {
         HANDLE_RESULT(cudaDeviceSynchronize());
 
         HANDLE_RESULT(cudaMemcpyFromSymbol(&total_Q_size_cpu, total_Q_size, sizeof(int)));
-        printf("step %d, total_Q_size %d\n", step, total_Q_size_cpu);
+        long long upperbound_cpu;
+        HANDLE_RESULT(cudaMemcpyFromSymbol(&upperbound_cpu, upper_bound, sizeof(long long)));
+        int max_level_cpu;
+        HANDLE_RESULT(cudaMemcpyFromSymbol(&max_level_cpu, max_level, sizeof(int)));
+        int used_states_cpu;
+        HANDLE_RESULT(cudaMemcpyFromSymbol(&used_states_cpu, used_states, sizeof(int)));
+        printf("[%5d] ratio %.2f, state pending: %7d, total state: %7d, known ub %5lld\n",
+               step,
+               floor(100.0 * (1.0 - (double)total_Q_size_cpu / (double)used_states_cpu)) / 100.0,
+               total_Q_size_cpu,
+               used_states_cpu,
+               upperbound_cpu);
 
         step++;
     } while (total_Q_size_cpu > 0);
@@ -323,6 +349,9 @@ int ged_astar_gpu(const Graph &q, const Graph &g) {
 
     auto duration = end - start;
     // output << std::chrono::duration_cast<std::chrono::milliseconds>(duration).count() << "\n";
+    printf("total time: %ld ms\n", std::chrono::duration_cast<std::chrono::milliseconds>(duration).count());
+    auto search_duration = end - search_start;
+    printf("searching:  %ld ms\n", std::chrono::duration_cast<std::chrono::milliseconds>(search_duration).count());
 
     // TODO: output result
 
@@ -442,6 +471,13 @@ __device__ void compute_mapped_cost(state *now) {
 __global__ void fill_list(int k, heap **Q, list *S, state *states_pool) {
     int id = calculate_id();
     if (id == 0)steps++;
+
+    __shared__ long long ub_block;
+    if (threadIdx.x == 0) {
+        ub_block = upper_bound;
+    }
+    __syncthreads();
+
     for (int i_ = id; i_ < k; i_ += blockDim.x * gridDim.x) {
         if (Q[i_]->size == 0) continue;
         state *q = heap_extract(Q[i_]);
@@ -454,9 +490,12 @@ __global__ void fill_list(int k, heap **Q, list *S, state *states_pool) {
         //     continue;
         // }
 
-        if (q->f > upper_bound) {
+        if (q->f >= upper_bound) {
             continue;
         }
+
+        // if (q->level)
+        // printf("this state: \n", q->level, mapping_order[q->level]);
 
         state *sibling = state_create(0, 0, q->level, q->prev, states_pool);
         sibling->cs_cnt = 0;
@@ -483,7 +522,7 @@ __global__ void fill_list(int k, heap **Q, list *S, state *states_pool) {
             q->cs_cnt -= 1;
         }
 
-        if (q->level == g_n - 1) {
+        if (q->level == q_n - 1) {
             // reached the end of the query, extend it to full mapping
             u8 vis_q[MAX_N];
             for (int i = 0; i < q_n; i++) {
@@ -509,10 +548,11 @@ __global__ void fill_list(int k, heap **Q, list *S, state *states_pool) {
             }
 
             // todo: dump mapping
-            if (cost < upper_bound) {
-                printf("new upper bound: %d\n", cost);
-            }
-            atomicMin(&upper_bound, cost);
+            // if (cost < upper_bound) {
+            //     printf("new upper bound: %d\n", cost);
+            // }
+            // atomicMin(&upper_bound, cost);
+            atomicMin(&ub_block, cost);
 
             continue;
         }
@@ -532,6 +572,7 @@ __global__ void fill_list(int k, heap **Q, list *S, state *states_pool) {
             level = q->level + 1;
             mapped_cost = q->mapped_cost;
         }
+        atomicMax(&max_level, level);
 
         u8 vis_g[MAX_N], vis_q[MAX_N];
         for (int i = 0; i < g_n; i++) {
@@ -777,6 +818,8 @@ __global__ void fill_list(int k, heap **Q, list *S, state *states_pool) {
         }
     }
     
+    __syncthreads();
+    atomicMin(&upper_bound, ub_block);
 }
 
 __global__ void push_to_queues(int k, heap **Q, list *S, int off) {
@@ -804,7 +847,6 @@ void states_pool_destroy(state *states_pool) {
     HANDLE_RESULT(cudaFree(states_pool));
 }
 
-__device__ int used_states = 0;
 __device__ state *state_create(int lb, int mc, int level, state *prev, state *states_pool) {
     int index = atomicAdd(&used_states, 1);
     if (index >= STATES) {
@@ -840,7 +882,8 @@ __device__ void sort_siblings(sibling *begin, sibling *end) {
             int right_end = my_min(i + 2 * stride, length);
             int k = 0;
             while (left < left_end && right < right_end) {
-                if (begin[left].weight > begin[right].weight) {
+                if (begin[left].weight > begin[right].weight ||
+                    (begin[left].weight == begin[right].weight && begin[left].image < begin[right].image)) {
                     buffer[k++] = begin[left++];
                 } else {
                     buffer[k++] = begin[right++];
@@ -860,8 +903,8 @@ __device__ void sort_siblings(sibling *begin, sibling *end) {
 }
 
 __device__ sibling *alloc_siblings(int n) {
-    atomicAdd(&used_siblings, n);
-    int end = used_siblings;
+    int old = atomicAdd(&used_siblings, n);
+    // int end = used_siblings;
 
     // TODO: 修正
     /*
@@ -871,5 +914,6 @@ __device__ sibling *alloc_siblings(int n) {
     }
     */
 
-    return &(sibling_pool[end - n]);
+    // assert(old == end - n);
+    return &(sibling_pool[old]);
 }

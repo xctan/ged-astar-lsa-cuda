@@ -49,11 +49,11 @@ __device__ void heap_insert(heap *heap, state *state) {
     heap->size++;
     heap->states[heap->size] = state;
     int current = heap->size;
-    // while (current > 1 && (heap->states[current]->f < heap->states[current / 2]->f ||
-    //                        heap->states[current]->f == heap->states[current / 2]->f &&
-    //                        heap->states[current]->level > heap->states[current / 2]->level))
-    while (current > 1 && (heap->states[current]->level > heap->states[current / 2]->level ||
-                           heap->states[current]->f < heap->states[current / 2]->f))
+    while (current > 1 && (heap->states[current]->f < heap->states[current / 2]->f ||
+                           heap->states[current]->f == heap->states[current / 2]->f &&
+                           heap->states[current]->level > heap->states[current / 2]->level))
+    // while (current > 1 && (heap->states[current]->level > heap->states[current / 2]->level ||
+    //                        heap->states[current]->f < heap->states[current / 2]->f))
     {
         swap(&(heap->states[current]), &(heap->states[current / 2]));
         current /= 2;
