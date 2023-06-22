@@ -131,9 +131,11 @@ auto read_graph_from_file(const char *filename,
     return graphs;
 }
 
-int main() {
+int main(int argc, char *argv[]) {
     std::map<std::string, int> v_label_map, e_label_map;
-    auto graphs = read_graph_from_file("data/temp.txt", v_label_map, e_label_map);
+    std::vector<Graph> graphs;
+    if (argc == 1) graphs = read_graph_from_file("data/temp.txt", v_label_map, e_label_map);
+    else graphs = read_graph_from_file(argv[1], v_label_map, e_label_map);
     printf("number of graphs: %ld\n", graphs.size());
     printf("number of vertex labels: %ld\n", v_label_map.size());
     printf("number of edge labels: %ld\n", e_label_map.size());
