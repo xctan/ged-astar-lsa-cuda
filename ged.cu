@@ -29,8 +29,12 @@ __device__ sibling *alloc_siblings(int n);
 void states_pool_create(state **states);
 void states_pool_destroy(state *states_pool);
 
-#define THREADS_PER_BLOCK 128
-#define BLOCKS 16
+// #define THREADS_PER_BLOCK 128
+// #define BLOCKS 16
+extern int threads_per_block;
+extern int blocks;
+#define THREADS_PER_BLOCK threads_per_block
+#define BLOCKS blocks
 
 __device__ int total_Q_size = 0;
 __device__ int out_of_memory = 0;
@@ -472,11 +476,11 @@ __global__ void fill_list(int k, heap **Q, list *S, state *states_pool) {
     int id = calculate_id();
     if (id == 0)steps++;
 
-    __shared__ long long ub_block;
-    if (threadIdx.x == 0) {
-        ub_block = upper_bound;
-    }
-    __syncthreads();
+    // __shared__ long long ub_block;
+    // if (threadIdx.x == 0) {
+    //     ub_block = upper_bound;
+    // }
+    // __syncthreads();
 
     for (int i_ = id; i_ < k; i_ += blockDim.x * gridDim.x) {
         if (Q[i_]->size == 0) continue;
@@ -551,8 +555,8 @@ __global__ void fill_list(int k, heap **Q, list *S, state *states_pool) {
             // if (cost < upper_bound) {
             //     printf("new upper bound: %d\n", cost);
             // }
-            // atomicMin(&upper_bound, cost);
-            atomicMin(&ub_block, cost);
+            atomicMin(&upper_bound, cost);
+            // atomicMin(&ub_block, cost);
 
             continue;
         }
@@ -818,8 +822,8 @@ __global__ void fill_list(int k, heap **Q, list *S, state *states_pool) {
         }
     }
     
-    __syncthreads();
-    atomicMin(&upper_bound, ub_block);
+    // __syncthreads();
+    // atomicMin(&upper_bound, ub_block);
 }
 
 __global__ void push_to_queues(int k, heap **Q, list *S, int off) {

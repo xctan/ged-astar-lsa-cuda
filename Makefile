@@ -1,6 +1,6 @@
 NVCC=/usr/local/cuda/bin/nvcc
 NVCCFLAGS=-g -G -std=c++20
-OBJS=main.o ged.o heap.o list.o
+OBJS=main.o ged.o heap.o list.o graph.o
 
 all: main
 

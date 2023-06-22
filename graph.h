@@ -29,4 +29,9 @@ struct Edge {
     int e_label_id;
 };
 
+auto read_graph_from_file(const char *filename,
+                          std::map<std::string, int> &v_label_map,
+                          std::map<std::string, int> &e_label_map)
+    -> std::vector<Graph>;
+
 #endif // __GRAPH_H__

@@ -3,139 +3,59 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <getopt.h>
 #include "common.h"
 #include "ged.h"
 
-/// @brief Reassign a label to an integer id.
-/// @param map 
-/// @param label 
-/// @return 
-auto remap_label(std::map<std::string, int> &map, const char *label) -> int
-{
-    auto it = map.find(label);
-    if (it == map.end()) {
-        int id = map.size();
-        map[label] = id;
-        return id;
-    } else {
-        return it->second;
-    }
-}
+int threads_per_block = 128;
+int blocks = 16;
+int heap_length = 16 * 1024;
 
-auto construct_graph(std::vector<Vertex> vertices, std::vector<Edge> edges) -> Graph
-{
-    std::sort(vertices.begin(), vertices.end(), [](const Vertex &a, const Vertex &b) {
-        return a.id < b.id;
-    });
-    std::sort(edges.begin(), edges.end(), [](const Edge &a, const Edge &b) {
-        return a.src < b.src || (a.src == b.src && a.dst < b.dst);
-    });
-
-    // ensure vertices are numbered from 0 to n - 1 contiguously
-    int n = vertices.size();
-    for (int i = 0; i < n; i++) {
-        my_assert(vertices[i].id == i && "Error: vertices are not numbered from 0 to n - 1 contiguously");
-    }
-
-    // ensure src and dst are valid in edges
-    int m = edges.size();
-    for (int i = 0; i < m; i++) {
-        my_assert(edges[i].src >= 0 && edges[i].src < n && "Error: invalid src in edges");
-        my_assert(edges[i].dst >= 0 && edges[i].dst < n && "Error: invalid dst in edges");
-        if (i > 0) {
-            my_assert((edges[i].src != edges[i - 1].src || edges[i].dst != edges[i - 1].dst) &&
-                      "Error: duplicate edges");
-        }
-    }
-
-    int *vertex_labels = new int[n];
-    int *edge_from_sep = new int[n + 1];
-    int *edge_to = new int[m];
-    int *edge_labels = new int[m];
-
-    std::fill(vertex_labels, vertex_labels + n, 0);
-    for (int i = 0; i < n; i++) {
-        vertex_labels[i] = vertices[i].v_label_id;
-    }
-    // calculate edge_from_sep[]
-    // first count edges of each vertex
-    std::fill(edge_from_sep, edge_from_sep + n + 1, 0);
-    for (int i = 0; i < m; i++) {
-        edge_from_sep[edges[i].src + 1]++;
-        edge_to[i] = edges[i].dst;
-        edge_labels[i] = edges[i].e_label_id;
-    }
-    // then compute prefix sum as index range of edges of each vertex
-    for (int i = 1; i <= n; i++) {
-        edge_from_sep[i] += edge_from_sep[i - 1];
-    }
-
-    return {n, m, vertex_labels, edge_from_sep, edge_to, edge_labels};
-}
-
-auto read_graph_from_file(const char *filename,
-                          std::map<std::string, int> &v_label_map,
-                          std::map<std::string, int> &e_label_map)
-    -> std::vector<Graph>
-{
-    FILE *fp = fopen(filename, "r");
-    if (fp == NULL) {
-        panic("Error: could not open file %s\n", filename);
-    }
-    
-    char linebuf[1024], labelbuf[128];
-    int a, b;
-    std::vector<Vertex> vertices;
-    std::vector<Edge> edges;
-    std::vector<Graph> graphs;
-
-    enum {
-        WAIT_FOR_BEGIN,
-        READING,
-    } state = WAIT_FOR_BEGIN;
-    auto finalize_reading = [&] {
-        if (state == READING) {
-            graphs.push_back(construct_graph(std::move(vertices), std::move(edges)));
-        }
-    };
-    while (fgets(linebuf, sizeof(linebuf), fp) != NULL) {
-        if (linebuf[0] == '#') {
-            continue;
-        }
-        if (state == WAIT_FOR_BEGIN) {
-            if (linebuf[0] == 't') {
-                state = READING;
-            }
-        } else if (state == READING) {
-            switch (linebuf[0]) {
-            case 'v':
-                sscanf(linebuf + 1, "%d %128s", &a, labelbuf);
-                vertices.push_back({a, remap_label(v_label_map, labelbuf)});
-                break;
-            case 'e':
-                sscanf(linebuf + 1, "%d %d %128s", &a, &b, labelbuf);
-                edges.push_back({a, b, remap_label(e_label_map, labelbuf)});
-                edges.push_back({b, a, remap_label(e_label_map, labelbuf)});
-                break;
-            case 't':
-                finalize_reading();
-                break;
-            default:
-                panic("Error: invalid line: %s\n", linebuf);
-            }
-        }
-    }
-    finalize_reading();
-
-    fclose(fp);
-    return graphs;
-}
+static struct option long_options[] = {
+    {"threads-per-block", required_argument, NULL, 't'},
+    {"blocks", required_argument, NULL, 'b'},
+    {"heap-length", required_argument, NULL, 'q'},
+    {"help", no_argument, NULL, 'h'},
+    {NULL, 0, NULL, 0},
+};
 
 int main(int argc, char *argv[]) {
+    while (true) {
+        int option_index = 0;
+        int c = getopt_long(argc, argv, "ht:b:q:", long_options, &option_index);
+        if (c == -1) break;
+        
+        switch (c) {
+        case 't':
+            threads_per_block = atoi(optarg);
+            break;
+        case 'b':
+            blocks = atoi(optarg);
+            break;
+        case 'q':
+            heap_length = atoi(optarg);
+            break;
+        case 'h':
+            printf("Usage: %s [options] [file]\n", argv[0]);
+            printf("Options:\n");
+            printf("  -t, --threads-per-block=NUM\n");
+            printf("  -b, --blocks=NUM\n");
+            printf("  -q, --heap-length=NUM\n");
+            printf("  -h, --help\n");
+            exit(0);
+            break;
+        default:
+            printf("Unknown option: %c\n", c);
+            exit(1);
+        }
+    }
+
+    const char *filename = "data/temp.txt";
+    if (optind < argc) filename = argv[optind];
+
     std::map<std::string, int> v_label_map, e_label_map;
-    std::vector<Graph> graphs;
-    if (argc == 1) graphs = read_graph_from_file("data/temp.txt", v_label_map, e_label_map);
-    else graphs = read_graph_from_file(argv[1], v_label_map, e_label_map);
+    std::vector<Graph> graphs = 
+        read_graph_from_file(filename, v_label_map, e_label_map);
     printf("number of graphs: %ld\n", graphs.size());
     printf("number of vertex labels: %ld\n", v_label_map.size());
     printf("number of edge labels: %ld\n", e_label_map.size());

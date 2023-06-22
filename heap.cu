@@ -2,13 +2,15 @@
 #include <stdio.h>
 #include "heap.h"
 
+extern int heap_length;
+
 __device__ static void swap(state **s1, state **s2);
 
 heap **heaps_create(int k) {
     heap **Q_cpu = (heap**)malloc(k * sizeof(heap*));
     heap **Q_dev = NULL;
     for (int i = 0; i < k; i++) {
-        Q_cpu[i] = heap_create(16 * 1024);
+        Q_cpu[i] = heap_create(heap_length);
     }
     HANDLE_RESULT(cudaMalloc(&Q_dev, k * sizeof(heap*)));
     HANDLE_RESULT(cudaMemcpy(Q_dev, Q_cpu, k * sizeof(heap*), cudaMemcpyDefault));
