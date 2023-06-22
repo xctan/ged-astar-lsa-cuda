@@ -59,7 +59,7 @@ auto construct_graph(std::vector<Vertex> vertices, std::vector<Edge> edges) -> G
     }
     // calculate edge_from_sep[]
     // first count edges of each vertex
-    edge_from_sep[0] = 0;
+    std::fill(edge_from_sep, edge_from_sep + n + 1, 0);
     for (int i = 0; i < m; i++) {
         edge_from_sep[edges[i].src + 1]++;
         edge_to[i] = edges[i].dst;
